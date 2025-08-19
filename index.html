@@ -1,236 +1,264 @@
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Edifica Multi-Compiler</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <script src="https://cjrtnc.leaningtech.com/4.2/loader.js"></script>
+// /index.js — Java + HTML, HTML+CSS, SQL, JS (root page)
+// Root page MUST NOT enable COEP. If user picks Python, redirect to /py/.
 
-  <style>
-    :root { --bg:#0b0f14; --fg:#e8eef3; --muted:#a9b6c3; }
-    body { margin:0; font-family:system-ui,Segoe UI,Inter,sans-serif; background:var(--bg); color:var(--fg); }
-    header, footer { padding:12px 16px; background:#0e141b; border-bottom:1px solid #1b2633; }
-    .bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-    select, button { padding:8px 12px; border-radius:10px; border:1px solid #223042; background:#111824; color:var(--fg); }
-    main { padding:12px; display:grid; gap:12px; grid-template-columns: 1fr 1fr; }
-    textarea, input { width:100%; padding:10px; border-radius:10px; border:1px solid #223042; background:#0e141b; color:var(--fg); font:14px ui-monospace, SFMono-Regular, Menlo, monospace; }
-    #code { height:280px; }
-    #term { min-height:260px; white-space:pre-wrap; background:#0e141b; border:1px solid #223042; border-radius:10px; padding:10px; }
-    #iframeWrap { border:1px solid #223042; border-radius:10px; overflow:hidden; height:320px; background:#fff; display:none; }
-    iframe { width:100%; height:100%; border:0; }
-    .row { display:flex; gap:8px; align-items:center; }
-    @media (max-width: 900px){ main{ grid-template-columns:1fr; } }
-    small { color: var(--muted); }
-  </style>
-
-  <!-- SQL (SQLite in the browser) -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js"
-          crossorigin="anonymous" defer></script>
-</head>
-<body>
-<header>
-  <div class="bar">
-    <strong>Edifica Multi-Compiler-3</strong>
-    <select id="lang">
-      <option value="python">Python</option>
-      <option value="java">Java</option>
-      <option value="sql">SQL (SQLite)</option>
-      <option value="javascript">JavaScript</option>
-      <option value="html_css">HTML & CSS (+ JS)</option>
-    </select>
-    <button id="run">▶ Run</button>
-    <small id="status"></small>
-  </div>
-</header>
-
-<main>
-  <div>
-    <label>Source</label>
-    <textarea id="code"></textarea>
-
-    <!-- HTML/CSS/JS editors (only visible when HTML & CSS selected) -->
-    <div id="webEditors" style="display:none; gap:8px;">
-      <label>HTML</label>
-      <textarea id="html"></textarea>
-      <label>CSS</label>
-      <textarea id="css"></textarea>
-      <label>JS (optional)</label>
-      <textarea id="js"></textarea>
-    </div>
-
-    <div class="row" id="inputRow">
-      <label for="line" style="min-width:90px">Input ⤶</label>
-      <input id="line" placeholder="type input and press Enter" />
-    </div>
-  </div>
-
-  <div>
-    <label>Console</label>
-    <pre id="term"></pre>
-    <div id="iframeWrap"><iframe id="preview"></iframe></div>
-  </div>
-</main>
-
-<footer>
-  <small>Python powered by Pyodide (WebAssembly). SQL by sql.js. Everything runs in your browser — no server costs.</small>
-</footer>
-
-<script>
 'use strict';
 
-/* ---------- DOM refs ---------- */
-const code = document.getElementById('code');
-const term = document.getElementById('term');
-const line = document.getElementById('line');
+// ---- DOM ----
+const lang     = document.getElementById('lang');
+const code     = document.getElementById('code');
+const term     = document.getElementById('term');
+const line     = document.getElementById('line');
 const statusEl = document.getElementById('status');
-const langSel = document.getElementById('lang');
-const webBox  = document.getElementById('webEditors');
-const htmlEl  = document.getElementById('html');
-const cssEl   = document.getElementById('css');
-const jsEl    = document.getElementById('js');
-const iframe  = document.getElementById('preview');
-const iframeWrap = document.getElementById('iframeWrap');
 
+const webBox   = document.getElementById('webEditors'); // shown for HTML+CSS
+const htmlEl   = document.getElementById('html');
+const cssEl    = document.getElementById('css');
+const iframe   = document.getElementById('preview');
+
+// ---- Templates ----
 const TPL = {
-  python: `print("enter ", end="")\nx = int(input())\nprint("You typed:", x)`,
-  sql: `CREATE TABLE t(id INTEGER);\nINSERT INTO t VALUES (1),(2),(3);\nSELECT COUNT(*) AS cnt FROM t;`,
-  javascript: `const x = parseInt(prompt("enter")); console.log("You typed:", x);`,
-  html: `<!DOCTYPE html><h1>Hello, HTML</h1><p>Edit CSS & JS too!</p>`,
-  css: `body{font:16px system-ui; padding:20px} h1{color:#2a6}`,
-  js: `console.log("Hello from browser JS")`
+  java: `import java.util.*; class Main {
+  public static void main(String[] args){
+    Scanner sc = new Scanner(System.in);
+    System.out.print("enter ");
+    int x = sc.nextInt();
+    System.out.println("You typed: " + x);
+  }
+}`,
+  html_only: `<!DOCTYPE html>
+<h1>Hello, HTML</h1>
+<p>Edit and Run to preview.</p>`,
+  html_css_html: `<!DOCTYPE html>
+<h1>Hello</h1>
+<p>This is HTML + CSS mode.</p>`,
+  html_css_css: `body{font:16px system-ui;padding:20px} h1{color:#2a6}`,
+  sql: `CREATE TABLE t(id INTEGER);
+INSERT INTO t VALUES (1),(2),(3);
+SELECT COUNT(*) AS cnt FROM t;`,
+  js: `// Example
+console.log("Hello from JS");
+const name = prompt("enter your name");
+console.log("Hi, " + name);`
 };
 
-function setMode(mode){
-  const isWeb = (mode === 'html_css');
-  webBox.style.display = isWeb ? 'block' : 'none';
-  iframeWrap.style.display = isWeb ? 'block' : 'none';
-  code.style.display = isWeb ? 'none' : 'block';
-  document.getElementById('inputRow').style.display = isWeb ? 'none' : 'flex';
-  term.textContent = "";
-  if (isWeb) { htmlEl.value = TPL.html; cssEl.value = TPL.css; jsEl.value = TPL.js; }
-  else { code.value = TPL[mode] || ""; }
-}
-setMode(langSel.value);
-langSel.addEventListener('change', () => {
-  const v = langSel.value;
-  if (location.pathname.startsWith('/py/')) {
-    if (v !== 'python') location.href = '/';        // go to Java/others page
+// ---- Mode switching (including Python redirect) ----
+function setMode(v) {
+  term.textContent = '';
+  statusEl.textContent = '';
+  if (v === 'html_css') {
+    if (webBox) webBox.style.display = 'block';
+    if (code)   code.style.display   = 'none';
+    if (iframe) iframe.parentElement.style.display = 'block';
+    if (htmlEl && cssEl) {
+      htmlEl.value = TPL.html_css_html;
+      cssEl.value  = TPL.html_css_css;
+    }
   } else {
-    if (v === 'python') location.href = '/py/';     // go to Python page
+    if (webBox) webBox.style.display = 'none';
+    if (iframe) iframe.parentElement.style.display = 'none';
+    if (code)   code.style.display   = 'block';
+    if (code)   code.value = TPL[v] || '';
   }
+}
+setMode(lang.value);
+
+lang.addEventListener('change', () => {
+  const v = lang.value;
+  if (v === 'python') { location.href = '/py/'; return; }   // Python lives under /py/
+  setMode(v);
 });
 
-/* ---------- Shared input routing ---------- */
-let activeDeliver = null;
-line.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    const s = line.value + "\n";
-    line.value = "";
-    term.textContent += s;           // echo
-    if (activeDeliver) activeDeliver(s);
+// --------------------------------------------------------------------
+//                               SQL
+// --------------------------------------------------------------------
+let SQL_READY = false;
+let SQL_API   = null;
+let db        = null;
+
+async function ensureSQL() {
+  if (!window.initSqlJs) {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js';
+      s.crossOrigin = 'anonymous';
+      s.onload = resolve; s.onerror = () => reject(new Error('sql-wasm.js failed'));
+      document.head.appendChild(s);
+    });
   }
-});
-
-/* ---------- PYTHON (Worker + SharedArrayBuffer) ---------- */
-let pyWorker = null;
-let pyReady = false;
-let pyInitPromise = null;
-
-// Shared buffers
-const sigBuf  = new SharedArrayBuffer(4);
-const SIG     = new Int32Array(sigBuf);
-const dataBuf = new SharedArrayBuffer(65536);  // 64KB per line
-const LEN     = new Int32Array(dataBuf, 0, 1);
-const BYTES   = new Uint8Array(dataBuf, 4);
-
-function ensurePyWorker() {
-  if (pyInitPromise) return pyInitPromise;
-  pyWorker = new Worker('worker-python.js');
-
-  // Send shared buffers
-  pyWorker.postMessage({ type:'init', sig: sigBuf, data: dataBuf });
-
-  pyInitPromise = new Promise((resolve) => {
-    pyWorker.onmessage = (e) => {
-      const m = e.data;
-      if (m.type === 'inited') { statusEl.textContent = 'Python worker inited…'; }
-      if (m.type === 'ready')  { pyReady = true; statusEl.textContent = 'Python ready'; resolve(); }
-      if (m.type === 'out')    { term.textContent += m.data; }
-      if (m.type === 'done')   { statusEl.textContent = 'Done'; activeDeliver = null; }
-    };
-  });
-
-  pyWorker.onerror = (e) => { console.error('Worker error:', e); statusEl.textContent = 'Worker error'; };
-  return pyInitPromise;
-}
-
-function deliverToPython(lineStr) {
-  const bytes = new TextEncoder().encode(lineStr);
-  const n = Math.min(bytes.length, BYTES.length);
-  BYTES.set(bytes.subarray(0, n));
-  LEN[0] = n;
-  Atomics.store(SIG, 0, 1);
-  Atomics.notify(SIG, 0);
-}
-
-async function runPython(codeStr) {
-  await ensurePyWorker();                        // wait until worker says "ready"
-  activeDeliver = deliverToPython;               // now route input
-  pyWorker.postMessage({ type:'run', code: codeStr });
-}
-
-/* ---------- SQL (sql.js) ---------- */
-let SQL, db;
-async function ensureSQL(){
-  if (!SQL) {
-    SQL = await initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${f}` });
+  if (!SQL_READY) {
+    SQL_API = await window.initSqlJs({
+      locateFile: (f) => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${f}`
+    });
+    SQL_READY = true;
   }
-  db = new SQL.Database(); // new in-memory DB per run
+  db = new SQL_API.Database();
 }
 
-/* ---------- RUN button ---------- */
-document.getElementById('run').addEventListener('click', async () => {
-  const lang = langSel.value;
-  term.textContent = ""; statusEl.textContent = "Running…";
-  activeDeliver = null;
-
-  if (lang === 'python') {
-    statusEl.textContent = pyReady ? 'Running Python…' : 'Loading Python (first time ~10MB)…';
-    await runPython(code.value);
-    return;
+async function runSQL(sql) {
+  await ensureSQL();
+  try {
+    const res = db.exec(sql); // [{columns, values}]
+    if (!res.length) { term.textContent = '(ok)\n'; return; }
+    res.forEach(tbl => {
+      const header = tbl.columns.join(' | ');
+      term.textContent += header + '\n' + '-'.repeat(header.length) + '\n';
+      tbl.values.forEach(row => term.textContent += row.join(' | ') + '\n');
+      term.textContent += '\n';
+    });
+  } catch (e) {
+    term.textContent += String(e) + '\n';
   }
+}
 
-  if (lang === 'sql') {
-    await ensureSQL();
+// --------------------------------------------------------------------
+//                               Java
+// --------------------------------------------------------------------
+// CheerpJ loader must be present in <head> via:
+// <script src="https://cjrtnc.leaningtech.com/4.2/loader.js"></script>
+const ECJ_JAR = '/app/ecj.jar'; // upload ecj.jar to repo root (or adjust path)
+
+let cjBooted = false;
+async function ensureCheerpJ() {
+  if (!window.cheerpjInit) {
+    // If someone removed the loader tag, inject it dynamically:
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cjrtnc.leaningtech.com/4.2/loader.js';
+      s.onload = resolve; s.onerror = () => reject(new Error('CheerpJ loader failed'));
+      document.head.appendChild(s);
+    });
+  }
+  if (!cjBooted) { await window.cheerpjInit(); cjBooted = true; }
+}
+
+const RUNNER_SRC = `
+import java.io.*; import java.nio.charset.StandardCharsets; import java.nio.file.*; import java.lang.reflect.*;
+public class Runner {
+  public static void main(String[] args) throws Exception {
+    String mainClass = args.length>0 ? args[0] : "Main";
+    byte[] inBytes = new byte[0];
+    try { inBytes = Files.readAllBytes(Paths.get("/str/stdin.txt")); } catch (IOException ignore) {}
+    InputStream oldIn = System.in; PrintStream oldOut = System.out, oldErr = System.err;
+    ByteArrayOutputStream buf = new ByteArrayOutputStream();
+    PrintStream cap = new PrintStream(buf, true, "UTF-8");
+    System.setIn(new ByteArrayInputStream(inBytes)); System.setOut(cap); System.setErr(cap);
+    int exit = 0;
     try {
-      const res = db.exec(code.value);
-      if (res.length === 0) term.textContent = "(ok)\n";
-      else {
-        res.forEach(tbl => {
-          const header = tbl.columns.join(" | ");
-          term.textContent += header + "\n" + "-".repeat(header.length) + "\n";
-          tbl.values.forEach(row => term.textContent += row.join(" | ") + "\n");
-          term.textContent += "\n";
-        });
-      }
-      statusEl.textContent = "Done";
-    } catch (e) { term.textContent += String(e) + "\n"; statusEl.textContent = "Error"; }
-    return;
+      Class<?> c = Class.forName(mainClass);
+      c.getMethod("main", String[].class).invoke(null, (Object)new String[0]);
+    } catch (Throwable t) {
+      if (t instanceof InvocationTargetException && t.getCause()!=null) t.getCause().printStackTrace();
+      else t.printStackTrace();
+      exit = 1;
+    } finally {
+      System.setIn(oldIn); System.setOut(oldOut); System.setErr(oldErr);
+      Files.write(Paths.get("/str/stdout.txt"), buf.toString("UTF-8").getBytes(StandardCharsets.UTF_8));
+      Files.write(Paths.get("/str/exitcode.txt"), String.valueOf(exit).getBytes(StandardCharsets.UTF_8));
+    }
   }
+}`;
 
-  if (lang === 'javascript') {
-    try { eval(code.value); statusEl.textContent = "Done"; }
-    catch (e) { term.textContent += String(e) + "\n"; statusEl.textContent = "Error"; }
-    return;
-  }
-
-  if (lang === 'html_css') {
-    const doc = `<!doctype html><html><head><meta charset="utf-8"><style>${cssEl.value}</style></head><body>${htmlEl.value}<script>${jsEl.value}<\/script></body></html>`;
-    iframe.srcdoc = doc; statusEl.textContent = "Rendered (local)";
-    return;
+// Batch-stdin: collect lines before Run
+let javaInputLines = [];
+line.addEventListener('keydown', (e) => {
+  if (lang.value === 'java' && e.key === 'Enter') {
+    const s = line.value; line.value = '';
+    javaInputLines.push(s);
+    term.textContent += s + '\n'; // echo
+    e.preventDefault();
   }
 });
-</script>
-<script type="module" src="/java-runner.js"></script>
-</body>
-</html>
+
+async function runJava(javaSrc, stdinText) {
+  await ensureCheerpJ();
+  // write sources/input
+  window.cheerpOSAddStringFile('/str/Main.java',   javaSrc);
+  window.cheerpOSAddStringFile('/str/Runner.java', RUNNER_SRC);
+  window.cheerpOSAddStringFile('/str/stdin.txt',   stdinText || '');
+  // compile
+  const compileExit = await window.cheerpjRunMain(
+    'org.eclipse.jdt.internal.compiler.batch.Main',
+    ECJ_JAR, '-d', '/str/classes', '/str/Runner.java', '/str/Main.java'
+  );
+  if (compileExit !== 0) {
+    term.textContent += '(Compilation failed — see browser console for ECJ diagnostics)\n';
+    return;
+  }
+  // run
+  const runExit = await window.cheerpjRunMain('Runner', '/str/classes', 'Main');
+  const out = await (await window.cjFileBlob('/str/stdout.txt')).text();
+  term.textContent += out;
+  if (runExit !== 0) statusEl.textContent = 'Error';
+}
+
+// --------------------------------------------------------------------
+//                               JS
+// --------------------------------------------------------------------
+function runJavaScript(js) {
+  // capture console.log
+  const orig = console.log;
+  console.log = (...a) => { term.textContent += a.join(' ') + '\n'; orig.apply(console, a); };
+  try { (0, eval)(js); } catch (e) { term.textContent += String(e) + '\n'; }
+  console.log = orig;
+}
+
+// --------------------------------------------------------------------
+//                               HTML / HTML+CSS
+// --------------------------------------------------------------------
+function renderHTMLOnly(html) {
+  if (!iframe) return;
+  iframe.parentElement.style.display = 'block';
+  iframe.srcdoc = `<!doctype html><html><head><meta charset="utf-8"></head><body>${html}</body></html>`;
+}
+
+function renderHTMLCSS(html, css) {
+  if (!iframe) return;
+  iframe.parentElement.style.display = 'block';
+  iframe.srcdoc = `<!doctype html><html><head><meta charset="utf-8"><style>${css}</style></head><body>${html}</body></html>`;
+}
+
+// --------------------------------------------------------------------
+//                          RUN button
+// --------------------------------------------------------------------
+document.getElementById('run').addEventListener('click', async () => {
+  const v = lang.value;
+  term.textContent = '';
+  statusEl.textContent = 'Running…';
+
+  if (v === 'java') {
+    await runJava(code.value, javaInputLines.join('\n'));
+    statusEl.textContent = 'Done';
+    javaInputLines = [];
+    return;
+  }
+
+  if (v === 'sql') {
+    await runSQL(code.value);
+    statusEl.textContent = 'Done';
+    return;
+  }
+
+  if (v === 'js') {
+    runJavaScript(code.value);
+    statusEl.textContent = 'Done';
+    return;
+  }
+
+  if (v === 'html_only') {
+    renderHTMLOnly(code.value);
+    statusEl.textContent = 'Rendered';
+    return;
+  }
+
+  if (v === 'html_css') {
+    const htmlSrc = htmlEl ? htmlEl.value : '';
+    const cssSrc  = cssEl  ? cssEl.value  : '';
+    renderHTMLCSS(htmlSrc, cssSrc);
+    statusEl.textContent = 'Rendered';
+    return;
+  }
+
+  if (v === 'python') {
+    location.href = '/py/'; // safety: Python lives on isolated path
+  }
+});
