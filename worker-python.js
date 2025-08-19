@@ -1,4 +1,3 @@
-// worker-python.js — Pyodide in a Worker with true inline input
 'use strict';
 
 let pyodide;
@@ -23,7 +22,7 @@ self.onmessage = async (e) => {
   if (m.type === 'run') {
     await ensurePy();
 
-    // MUST return the number of chars written
+    // MUST return number of chars written
     pyodide.setStdout({ write: s => { postMessage({ type:'out', data:s }); return s.length; } });
     pyodide.setStderr({ write: s => { postMessage({ type:'out', data:s }); return s.length; } });
 
