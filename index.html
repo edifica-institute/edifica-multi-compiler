@@ -123,60 +123,6 @@ let activeDeliver = null; // a function each runner sets to receive input
 /* ---------- Python (Pyodide in a Worker for true inline input) ---------- */
 /* --- Python worker wiring (SharedArrayBuffer) --- */
 // --- Python worker wiring ---
-let pyWorker, pyReady = false;
-
-// Shared buffers
-const sigBuf  = new SharedArrayBuffer(4);
-const SIG     = new Int32Array(sigBuf);
-const dataBuf = new SharedArrayBuffer(65536);  // up to 64 KB per line
-const LEN     = new Int32Array(dataBuf, 0, 1);
-const BYTES   = new Uint8Array(dataBuf, 4);
-
-function ensurePyWorker() {
-  if (pyWorker) return;
-  pyWorker = new Worker('worker-python.js');
-  pyWorker.onerror = (e) => { console.error('Worker error:', e); statusEl.textContent = 'Worker error: ' + (e.message || e.filename); };
-  pyWorker.postMessage({ type: 'init', sig: sigBuf, data: dataBuf });
-  pyWorker.onmessage = (e) => {
-    const m = e.data;
-    if (m.type === 'ready') pyReady = true;
-    if (m.type === 'out')   term.textContent += m.data;
-    if (m.type === 'done')  { statusEl.textContent = 'Done'; activeDeliver = null; }
-  };
-}
-
-function deliverToPython(line) {
-  const bytes = new TextEncoder().encode(line);
-  const n = Math.min(bytes.length, BYTES.length);
-  BYTES.set(bytes.subarray(0, n));
-  LEN[0] = n;
-  Atomics.store(SIG, 0, 1);
-  Atomics.notify(SIG, 0);
-}
-
-function runPython(codeStr) {
-  ensurePyWorker();
-  activeDeliver = deliverToPython;                 // route input box to Python
-  if (!pyReady) statusEl.textContent = 'Loading Python...';
-  pyWorker.postMessage({ type: 'run', code: codeStr });
-}
-
-// In your Run button handler:
-if (lang === 'python') { term.textContent = ''; statusEl.textContent = 'Running...'; runPython(code.value); return; }
-
-// Your input box must call `activeDeliver` on Enter (you already have this):
-line.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    const s = line.value + '\n';
-    line.value = '';
-    term.textContent += s;          // echo like a console
-    if (activeDeliver) activeDeliver(s);
-  }
-});
-
-
-
-
   
 
 /* ---------- SQL (sql.js) ---------- */
@@ -256,5 +202,78 @@ document.getElementById('run').addEventListener('click', async () => {
   }
 });
 </script>
+
+  <script>
+'use strict';
+
+// UI
+const term = document.getElementById('term');
+const line = document.getElementById('line');
+const statusEl = document.getElementById('status');
+const code = document.getElementById('code');
+const langSel = document.getElementById('lang');
+
+let activeDeliver = null;
+
+// Shared buffers for the worker
+const sigBuf  = new SharedArrayBuffer(4);
+const SIG     = new Int32Array(sigBuf);
+const dataBuf = new SharedArrayBuffer(65536);
+const LEN     = new Int32Array(dataBuf, 0, 1);
+const BYTES   = new Uint8Array(dataBuf, 4);
+
+let pyWorker = null, pyReady = false;
+
+function ensurePyWorker() {
+  if (pyWorker) return;
+  pyWorker = new Worker('worker-python.js');
+  pyWorker.postMessage({ type:'init', sig: sigBuf, data: dataBuf });
+  pyWorker.onmessage = (e) => {
+    const m = e.data;
+    if (m.type === 'ready') { pyReady = true; statusEl.textContent = 'Python ready'; }
+    if (m.type === 'out')   { term.textContent += m.data; }
+    if (m.type === 'done')  { statusEl.textContent = 'Done'; activeDeliver = null; }
+  };
+  pyWorker.onerror = (e) => { console.error(e); statusEl.textContent = 'Worker error'; };
+}
+
+function deliverToPython(lineStr) {
+  const bytes = new TextEncoder().encode(lineStr);
+  const n = Math.min(bytes.length, BYTES.length);
+  BYTES.set(bytes.subarray(0, n));
+  LEN[0] = n;
+  Atomics.store(SIG, 0, 1);
+  Atomics.notify(SIG, 0);
+}
+
+function runPython(codeStr) {
+  ensurePyWorker();
+  activeDeliver = deliverToPython;
+  if (!pyReady) statusEl.textContent = 'Loading Python...';
+  pyWorker.postMessage({ type:'run', code: codeStr });
+}
+
+document.getElementById('run').addEventListener('click', () => {
+  term.textContent = '';
+  statusEl.textContent = 'Running...';
+  const lang = langSel.value;
+  if (lang === 'python') {
+    runPython(code.value);
+  } else {
+    statusEl.textContent = 'This minimal test only runs Python right now.';
+  }
+});
+
+// echo input and forward to active runner
+line.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    const s = line.value + '\n';
+    line.value = '';
+    term.textContent += s;       // echo like a console
+    if (activeDeliver) activeDeliver(s);
+  }
+});
+</script>
+
 </body>
 </html>
