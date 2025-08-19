@@ -1,5 +1,7 @@
 'use strict';
 
+importScripts("https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.js");
+
 let pyodide;
 
 // Shared buffers from the main page
