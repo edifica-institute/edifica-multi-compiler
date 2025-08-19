@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Edifica Multi-Compiler (Browser Mode)</title>
+  <title>Edifica Multi-Compiler</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root { --bg:#0b0f14; --fg:#e8eef3; --muted:#a9b6c3; }
@@ -20,8 +20,10 @@
     @media (max-width: 900px){ main{ grid-template-columns:1fr; } }
     small { color: var(--muted); }
   </style>
+
   <!-- SQL (SQLite in the browser) -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js"
+          crossorigin="anonymous" defer></script>
 </head>
 <body>
 <header>
@@ -71,7 +73,9 @@
 </footer>
 
 <script>
-/* ---------- UI state ---------- */
+'use strict';
+
+/* ---------- DOM refs ---------- */
 const code = document.getElementById('code');
 const term = document.getElementById('term');
 const line = document.getElementById('line');
@@ -87,7 +91,7 @@ const iframeWrap = document.getElementById('iframeWrap');
 const TPL = {
   python: `print("enter ", end="")\nx = int(input())\nprint("You typed:", x)`,
   sql: `CREATE TABLE t(id INTEGER);\nINSERT INTO t VALUES (1),(2),(3);\nSELECT COUNT(*) AS cnt FROM t;`,
-  javascript: `// Use readLine() for input\nwrite("enter ");\nconst x = parseInt(readLine());\nwrite("You typed: " + x + "\\n");`,
+  javascript: `// Simple example using prompt for input\nconst x = parseInt(prompt("enter")); console.log("You typed:", x);`,
   html: `<!DOCTYPE html><h1>Hello, HTML</h1><p>Edit CSS & JS too!</p>`,
   css: `body{font:16px system-ui; padding:20px} h1{color:#2a6}`,
   js: `console.log("Hello from browser JS")`
@@ -106,123 +110,25 @@ function setMode(mode){
 setMode(langSel.value);
 langSel.addEventListener('change', e => setMode(e.target.value));
 
-/* ---------- Inline input queue shared by languages ---------- */
-let inputQueue = [];
+/* ---------- Input routing (shared) ---------- */
+let activeDeliver = null;
 line.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     const s = line.value + "\n";
     line.value = "";
-    // echo what user typed (like a console)
-    term.textContent += s;
-    // deliver to whichever runner is active
+    term.textContent += s;      // echo
     if (activeDeliver) activeDeliver(s);
   }
 });
-let activeDeliver = null; // a function each runner sets to receive input
 
-/* ---------- Python (Pyodide in a Worker for true inline input) ---------- */
-/* --- Python worker wiring (SharedArrayBuffer) --- */
-// --- Python worker wiring ---
-  
-
-/* ---------- SQL (sql.js) ---------- */
-let SQL, db;
-async function ensureSQL(){
-  if (!SQL) {
-    SQL = await initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${f}` });
-    db = new SQL.Database(); // new in-memory DB per run (simple)
-  }
-}
-
-/* ---------- JavaScript (in-page) helpers ---------- */
-function jsRunner(src){
-  // capture output
-  const write = (s) => term.textContent += s;
-  // simple readLine pulling from the same input UI
-  let pending = [];
-  activeDeliver = (s) => pending.push(s);
-  function readLine(){
-    // block-ish: spin until we get a line (kept tiny; works for simple demos)
-    const start = Date.now();
-    while (pending.length === 0) {
-      // yield control to UI
-      if (Date.now() - start > 30000) throw new Error("Input timeout");
-    }
-    return pending.shift().replace(/\n$/, '');
-  }
-  // run user code in a sandboxed function scope
-  (function(){ eval(src); }).call({ write, readLine });
-  activeDeliver = null;
-}
-
-/* ---------- RUN button ---------- */
-document.getElementById('run').addEventListener('click', async () => {
-  const lang = langSel.value;
-  term.textContent = ""; statusEl.textContent = "Running...";
-  activeDeliver = null;
-
-  if (lang === 'python') {
-    ensurePyWorker();
-    if (!pyReady) { statusEl.textContent = "Loading Python... (first time ~10MB)"; }
-    // route input lines to the worker
-    activeDeliver = deliverToPython;
-    pyWorker.postMessage({ type:'run', code: code.value });
-    return;
-  }
-
-  if (lang === 'sql') {
-    await ensureSQL();
-    try {
-      const res = db.exec(code.value); // [{columns, values}, ...]
-      if (res.length === 0) term.textContent = "(ok)\n";
-      else {
-        // very simple table render
-        res.forEach(tbl => {
-          term.textContent += tbl.columns.join(" | ") + "\n";
-          term.textContent += "-".repeat(tbl.columns.join(" | ").length) + "\n";
-          tbl.values.forEach(row => term.textContent += row.join(" | ") + "\n");
-          term.textContent += "\n";
-        });
-      }
-      statusEl.textContent = "Done";
-    } catch (e) { term.textContent += String(e) + "\n"; statusEl.textContent = "Error"; }
-    return;
-  }
-
-  if (lang === 'javascript') {
-    try { jsRunner(code.value); statusEl.textContent = "Done"; }
-    catch (e) { term.textContent += String(e) + "\n"; statusEl.textContent = "Error"; }
-    return;
-  }
-
-  if (lang === 'html_css') {
-    const doc = `<!doctype html><html><head><meta charset="utf-8"><style>${cssEl.value}</style></head><body>${htmlEl.value}<script>${jsEl.value}<\/script></body></html>`;
-    iframe.srcdoc = doc; statusEl.textContent = "Rendered (local)";
-    return;
-  }
-});
-</script>
-
-  <script>
-'use strict';
-
-// UI
-const term = document.getElementById('term');
-const line = document.getElementById('line');
-const statusEl = document.getElementById('status');
-const code = document.getElementById('code');
-const langSel = document.getElementById('lang');
-
-let activeDeliver = null;
-
-// Shared buffers for the worker
+/* ---------- PYTHON (Pyodide in Worker with SharedArrayBuffer) ---------- */
+let pyWorker = null, pyReady = false;
+// Shared buffers
 const sigBuf  = new SharedArrayBuffer(4);
 const SIG     = new Int32Array(sigBuf);
-const dataBuf = new SharedArrayBuffer(65536);
+const dataBuf = new SharedArrayBuffer(65536);  // 64KB per line
 const LEN     = new Int32Array(dataBuf, 0, 1);
 const BYTES   = new Uint8Array(dataBuf, 4);
-
-let pyWorker = null, pyReady = false;
 
 function ensurePyWorker() {
   if (pyWorker) return;
@@ -249,31 +155,60 @@ function deliverToPython(lineStr) {
 function runPython(codeStr) {
   ensurePyWorker();
   activeDeliver = deliverToPython;
-  if (!pyReady) statusEl.textContent = 'Loading Python...';
+  if (!pyReady) statusEl.textContent = 'Loading Python... (first time ~10MB)';
   pyWorker.postMessage({ type:'run', code: codeStr });
 }
 
-document.getElementById('run').addEventListener('click', () => {
-  term.textContent = '';
-  statusEl.textContent = 'Running...';
+/* ---------- SQL (sql.js) ---------- */
+let SQL, db;
+async function ensureSQL(){
+  if (!SQL) {
+    SQL = await initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${f}` });
+  }
+  db = new SQL.Database(); // new in-memory DB per run
+}
+
+/* ---------- RUN button ---------- */
+document.getElementById('run').addEventListener('click', async () => {
   const lang = langSel.value;
+  term.textContent = ""; statusEl.textContent = "Running...";
+  activeDeliver = null;
+
   if (lang === 'python') {
     runPython(code.value);
-  } else {
-    statusEl.textContent = 'This minimal test only runs Python right now.';
+    return;
   }
-});
 
-// echo input and forward to active runner
-line.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    const s = line.value + '\n';
-    line.value = '';
-    term.textContent += s;       // echo like a console
-    if (activeDeliver) activeDeliver(s);
+  if (lang === 'sql') {
+    await ensureSQL();
+    try {
+      const res = db.exec(code.value); // [{columns, values}]
+      if (res.length === 0) term.textContent = "(ok)\n";
+      else {
+        res.forEach(tbl => {
+          const header = tbl.columns.join(" | ");
+          term.textContent += header + "\n" + "-".repeat(header.length) + "\n";
+          tbl.values.forEach(row => term.textContent += row.join(" | ") + "\n");
+          term.textContent += "\n";
+        });
+      }
+      statusEl.textContent = "Done";
+    } catch (e) { term.textContent += String(e) + "\n"; statusEl.textContent = "Error"; }
+    return;
+  }
+
+  if (lang === 'javascript') {
+    try { /* simple: use prompt for input */ eval(code.value); statusEl.textContent = "Done"; }
+    catch (e) { term.textContent += String(e) + "\n"; statusEl.textContent = "Error"; }
+    return;
+  }
+
+  if (lang === 'html_css') {
+    const doc = `<!doctype html><html><head><meta charset="utf-8"><style>${cssEl.value}</style></head><body>${htmlEl.value}<script>${jsEl.value}<\/script></body></html>`;
+    iframe.srcdoc = doc; statusEl.textContent = "Rendered (local)";
+    return;
   }
 });
 </script>
-
 </body>
 </html>
