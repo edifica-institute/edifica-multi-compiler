@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<title>Multi-Compiler</title>
+<title>Edifica-Multi-Compiler</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   :root { --bg:#0b0f14; --fg:#e8eef3; --muted:#9fb1c1; }
@@ -80,7 +80,13 @@
 <script>
 // --- defaults per language ---
 const TPL = {
-  java: `class Main{public static void main(String[]args){ System.out.println("Hello, Java!"); }}`,
+  java: `class Main
+  {
+  public static void main(String[]args)
+  { 
+  System.out.println("Hello, Java!"); 
+  }
+  }`,
   c:    `#include <stdio.h>\nint main(){ int x=10; int *p=&x; printf("%d\\n", *p); }`,
   cpp:  `#include <bits/stdc++.h>\nusing namespace std; int main(){ int x=42; int* p=&x; cout<<*p; }`,
   python: `print("Hello, Python!")`,
