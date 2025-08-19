@@ -115,12 +115,12 @@ async function runSQL(sql) {
 // --------------------------------------------------------------------
 // CheerpJ loader must be present in <head> via:
 // <script src="https://cjrtnc.leaningtech.com/4.2/loader.js"></script>
-const ECJ_JAR = '/app/ecj.jar'; // upload ecj.jar to repo root (or adjust path)
+// ------------------------------ Java (CheerpJ + ECJ) ------------------------------
+const ECJ_LOCAL_URL = '/ecj.jar'; // change to '/libs/ecj.jar' if you put it in /libs
 
 let cjBooted = false;
 async function ensureCheerpJ() {
   if (!window.cheerpjInit) {
-    // If someone removed the loader tag, inject it dynamically:
     await new Promise((resolve, reject) => {
       const s = document.createElement('script');
       s.src = 'https://cjrtnc.leaningtech.com/4.2/loader.js';
@@ -129,6 +129,18 @@ async function ensureCheerpJ() {
     });
   }
   if (!cjBooted) { await window.cheerpjInit(); cjBooted = true; }
+}
+
+// Mount ecj.jar into CheerpJ’s FS to avoid Range requests
+let ecjMounted = false;
+async function ensureECJMounted() {
+  if (ecjMounted) return;
+  const res = await fetch(ECJ_LOCAL_URL);
+  if (!res.ok) throw new Error('ECJ fetch failed: ' + res.status);
+  const buf = new Uint8Array(await res.arrayBuffer());
+  // Put the jar into /str; CheerpJ can read it from there
+  window.cheerpOSAddBufferFile('/str/ecj.jar', buf);
+  ecjMounted = true;
 }
 
 const RUNNER_SRC = `
@@ -143,13 +155,11 @@ public class Runner {
     PrintStream cap = new PrintStream(buf, true, "UTF-8");
     System.setIn(new ByteArrayInputStream(inBytes)); System.setOut(cap); System.setErr(cap);
     int exit = 0;
-    try {
-      Class<?> c = Class.forName(mainClass);
-      c.getMethod("main", String[].class).invoke(null, (Object)new String[0]);
+    try { Class<?> c = Class.forName(mainClass);
+          c.getMethod("main", String[].class).invoke(null, (Object)new String[0]);
     } catch (Throwable t) {
       if (t instanceof InvocationTargetException && t.getCause()!=null) t.getCause().printStackTrace();
-      else t.printStackTrace();
-      exit = 1;
+      else t.printStackTrace(); exit = 1;
     } finally {
       System.setIn(oldIn); System.setOut(oldOut); System.setErr(oldErr);
       Files.write(Paths.get("/str/stdout.txt"), buf.toString("UTF-8").getBytes(StandardCharsets.UTF_8));
@@ -158,38 +168,41 @@ public class Runner {
   }
 }`;
 
-// Batch-stdin: collect lines before Run
+// Batch-stdin: collect lines before Run (unchanged)
 let javaInputLines = [];
 line.addEventListener('keydown', (e) => {
   if (lang.value === 'java' && e.key === 'Enter') {
     const s = line.value; line.value = '';
     javaInputLines.push(s);
-    term.textContent += s + '\n'; // echo
+    term.textContent += s + '\n';
     e.preventDefault();
   }
 });
 
 async function runJava(javaSrc, stdinText) {
   await ensureCheerpJ();
-  // write sources/input
+  await ensureECJMounted();
+
   window.cheerpOSAddStringFile('/str/Main.java',   javaSrc);
   window.cheerpOSAddStringFile('/str/Runner.java', RUNNER_SRC);
   window.cheerpOSAddStringFile('/str/stdin.txt',   stdinText || '');
-  // compile
+
+  // NOTE: classpath now points to the mounted /str/ecj.jar (no Range needed)
   const compileExit = await window.cheerpjRunMain(
     'org.eclipse.jdt.internal.compiler.batch.Main',
-    ECJ_JAR, '-d', '/str/classes', '/str/Runner.java', '/str/Main.java'
+    '/str/ecj.jar', '-d', '/str/classes', '/str/Runner.java', '/str/Main.java'
   );
   if (compileExit !== 0) {
-    term.textContent += '(Compilation failed — see browser console for ECJ diagnostics)\n';
+    term.textContent += '(Compilation failed — check Console for ECJ messages)\n';
     return;
   }
-  // run
+
   const runExit = await window.cheerpjRunMain('Runner', '/str/classes', 'Main');
   const out = await (await window.cjFileBlob('/str/stdout.txt')).text();
   term.textContent += out;
   if (runExit !== 0) statusEl.textContent = 'Error';
 }
+
 
 // --------------------------------------------------------------------
 //                               JS
