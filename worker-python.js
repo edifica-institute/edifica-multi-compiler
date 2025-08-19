@@ -24,8 +24,12 @@ self.onmessage = async (e) => {
   if (m.type === 'run') {
     await ensurePy();
     // write output immediately
-    pyodide.setStdout({ write: s => postMessage({ type: 'out', data: s }) });
-    pyodide.setStderr({ write: s => postMessage({ type: 'out', data: s }) });
+    pyodide.setStdout({
+  write: (s) => { postMessage({ type: 'out', data: s }); return s.length; }
+});
+pyodide.setStderr({
+  write: (s) => { postMessage({ type: 'out', data: s }); return s.length; }
+});
 
     // blocking stdin via Atomics
     pyodide.setStdin({
