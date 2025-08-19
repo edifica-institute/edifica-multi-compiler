@@ -121,10 +121,21 @@ line.addEventListener('keydown', (e) => {
 let activeDeliver = null; // a function each runner sets to receive input
 
 /* ---------- Python (Pyodide in a Worker for true inline input) ---------- */
+/* --- Python worker wiring (SharedArrayBuffer) --- */
 let pyWorker, pyReady = false;
-function ensurePyWorker(){
+
+// Shared buffers we give to the worker
+const sigBuf  = new SharedArrayBuffer(4);        // 4 bytes for a signal
+const SIG     = new Int32Array(sigBuf);
+const dataBuf = new SharedArrayBuffer(65536);    // 64 KB for a line of input
+const LEN     = new Int32Array(dataBuf, 0, 1);   // first 4 bytes = length
+const BYTES   = new Uint8Array(dataBuf, 4);      // rest = utf-8 bytes
+
+function ensurePyWorker() {
   if (pyWorker) return;
   pyWorker = new Worker('worker-python.js');
+  // hand the worker both shared buffers
+  pyWorker.postMessage({ type:'init', sig: sigBuf, data: dataBuf });
   pyWorker.onmessage = (e) => {
     const m = e.data;
     if (m.type === 'ready') { pyReady = true; statusEl.textContent = "Python ready"; }
@@ -132,8 +143,24 @@ function ensurePyWorker(){
     if (m.type === 'done')  { statusEl.textContent = "Done"; activeDeliver = null; }
   };
 }
-// send input lines into the worker
-function deliverToPython(s){ pyWorker?.postMessage({ type:'stdin', data: s }); }
+
+// called whenever the user presses Enter in the Input box
+function deliverToPython(line) {
+  const bytes = new TextEncoder().encode(line);
+  const n = Math.min(bytes.length, BYTES.length);
+  BYTES.set(bytes.subarray(0, n));
+  LEN[0] = n;
+  Atomics.store(SIG, 0, 1);
+  Atomics.notify(SIG, 0);
+}
+
+// Hook into your existing UI
+function runPython(codeStr) {
+  ensurePyWorker();
+  activeDeliver = deliverToPython;           // so the input box routes to Python
+  if (!pyReady) statusEl.textContent = "Loading Python...";
+  pyWorker.postMessage({ type:'run', code: codeStr });
+}
 
 /* ---------- SQL (sql.js) ---------- */
 let SQL, db;
