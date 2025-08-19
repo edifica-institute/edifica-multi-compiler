@@ -1,18 +1,18 @@
-<script type="module">
-// === Java runner (CheerpJ + ECJ) ===
-// Requires: <script src="https://cjrtnc.leaningtech.com/4.2/loader.js"></script> in <head>
-// And libs/ecj.jar in your repo.
+// === Java runner (CheerpJ + ECJ) — pure JS file ===
+// Requires in <head>:
+//   <script src="https://cjrtnc.leaningtech.com/4.2/loader.js"></script>
+// Put ecj.jar at repo root (rename to ecj.jar). If you used /libs/ecj.jar, change ECJ_JAR below.
 
-const ECJ_JAR = "/app/libs/ecj.jar"; // CheerpJ maps /app to your site root
+const ECJ_JAR = "/app/ecj.jar"; // or "/app/libs/ecj.jar" if you put it in /libs
 
-// DOM handles from your page
+// DOM refs from your page
 const langSel = document.getElementById('lang');
-const code    = document.getElementById('code');
+const codeEl  = document.getElementById('code');
 const term    = document.getElementById('term');
 const status  = document.getElementById('status');
 const line    = document.getElementById('line');
 
-// Simple Java starter
+// Starter template
 const JAVA_TPL = `import java.util.*; class Main {
   public static void main(String[] args){
     Scanner sc = new Scanner(System.in);
@@ -24,8 +24,8 @@ const JAVA_TPL = `import java.util.*; class Main {
 
 // Give template when Java is selected
 langSel.addEventListener('change', () => {
-  if (langSel.value === 'java' && (!code.value || !code.value.includes("class Main"))) {
-    code.value = JAVA_TPL;
+  if (langSel.value === 'java' && (!codeEl.value || !codeEl.value.includes("class Main"))) {
+    codeEl.value = JAVA_TPL;
   }
 });
 
@@ -34,19 +34,18 @@ async function ensureCheerpJ() {
   if (!_cjReady) { await cheerpjInit(); _cjReady = true; }
 }
 
-// We buffer lines typed in the input box BEFORE clicking Run.
-// (V1: “batch stdin”. We can upgrade to true keystroke streaming later.)
+// Buffer lines typed BEFORE clicking Run (batch stdin v1)
 let javaInput = [];
 line.addEventListener('keydown', (e) => {
   if (langSel.value === 'java' && e.key === 'Enter') {
     const s = line.value; line.value = "";
     javaInput.push(s);
-    term.textContent += s + "\n"; // echo to console
+    term.textContent += s + "\n"; // echo
     e.preventDefault();
   }
 });
 
-// Helper “Runner” class: feeds stdin from /str/stdin.txt, captures stdout to /str/stdout.txt
+// Helper Runner to feed stdin and capture stdout
 const RUNNER_SRC = `
 import java.io.*; import java.nio.charset.StandardCharsets; import java.nio.file.*; import java.lang.reflect.*;
 public class Runner {
@@ -74,11 +73,11 @@ public class Runner {
   }
 }`;
 
-// Compile + run Main.java entirely in the browser
+// Compile + run Main.java fully in the browser
 async function runJava(javaSrc, stdinText) {
   await ensureCheerpJ();
 
-  // Write sources and stdin into CheerpJ’s virtual FS
+  // Write sources & stdin to CheerpJ filesystem
   cheerpOSAddStringFile("/str/Main.java",   javaSrc);
   cheerpOSAddStringFile("/str/Runner.java", RUNNER_SRC);
   cheerpOSAddStringFile("/str/stdin.txt",   stdinText || "");
@@ -90,9 +89,12 @@ async function runJava(javaSrc, stdinText) {
     "-d", "/str/classes",
     "/str/Runner.java", "/str/Main.java"
   );
-  if (compileExit !== 0) return { ok:false, out:"Compilation failed (see browser console for details)." };
+  if (compileExit !== 0) {
+    status.textContent = "Compilation failed (see browser console for ECJ errors).";
+    return { ok:false, out:"" };
+  }
 
-  // Run our Runner → it invokes Main and captures stdout/stderr
+  // Run and capture output
   const runExit = await cheerpjRunMain("Runner", "/str/classes", "Main");
   const out = await (await cjFileBlob("/str/stdout.txt")).text();
   return { ok: runExit === 0, out };
@@ -100,11 +102,11 @@ async function runJava(javaSrc, stdinText) {
 
 // Hook into your existing Run button (only when Java is selected)
 document.getElementById('run').addEventListener('click', async () => {
-  if (langSel.value !== 'java') return; // let your other code handle Python/SQL/JS/HTML
-  term.textContent = ""; status.textContent = "Running Java…";
-  const { ok, out } = await runJava(code.value, javaInput.join("\n"));
+  if (langSel.value !== 'java') return; // other languages handled elsewhere
+  term.textContent = "";
+  status.textContent = "Running Java…";
+  const { ok, out } = await runJava(codeEl.value, javaInput.join("\n"));
   term.textContent += out;
   status.textContent = ok ? "Done" : "Error";
-  javaInput = []; // reset for next run
+  javaInput = [];
 });
-</script>
