@@ -91,7 +91,7 @@ const iframeWrap = document.getElementById('iframeWrap');
 const TPL = {
   python: `print("enter ", end="")\nx = int(input())\nprint("You typed:", x)`,
   sql: `CREATE TABLE t(id INTEGER);\nINSERT INTO t VALUES (1),(2),(3);\nSELECT COUNT(*) AS cnt FROM t;`,
-  javascript: `// Simple example using prompt for input\nconst x = parseInt(prompt("enter")); console.log("You typed:", x);`,
+  javascript: `const x = parseInt(prompt("enter")); console.log("You typed:", x);`,
   html: `<!DOCTYPE html><h1>Hello, HTML</h1><p>Edit CSS & JS too!</p>`,
   css: `body{font:16px system-ui; padding:20px} h1{color:#2a6}`,
   js: `console.log("Hello from browser JS")`
@@ -110,19 +110,22 @@ function setMode(mode){
 setMode(langSel.value);
 langSel.addEventListener('change', e => setMode(e.target.value));
 
-/* ---------- Input routing (shared) ---------- */
+/* ---------- Shared input routing ---------- */
 let activeDeliver = null;
 line.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     const s = line.value + "\n";
     line.value = "";
-    term.textContent += s;      // echo
+    term.textContent += s;           // echo
     if (activeDeliver) activeDeliver(s);
   }
 });
 
-/* ---------- PYTHON (Pyodide in Worker with SharedArrayBuffer) ---------- */
-let pyWorker = null, pyReady = false;
+/* ---------- PYTHON (Worker + SharedArrayBuffer) ---------- */
+let pyWorker = null;
+let pyReady = false;
+let pyInitPromise = null;
+
 // Shared buffers
 const sigBuf  = new SharedArrayBuffer(4);
 const SIG     = new Int32Array(sigBuf);
@@ -131,16 +134,24 @@ const LEN     = new Int32Array(dataBuf, 0, 1);
 const BYTES   = new Uint8Array(dataBuf, 4);
 
 function ensurePyWorker() {
-  if (pyWorker) return;
+  if (pyInitPromise) return pyInitPromise;
   pyWorker = new Worker('worker-python.js');
+
+  // Send shared buffers
   pyWorker.postMessage({ type:'init', sig: sigBuf, data: dataBuf });
-  pyWorker.onmessage = (e) => {
-    const m = e.data;
-    if (m.type === 'ready') { pyReady = true; statusEl.textContent = 'Python ready'; }
-    if (m.type === 'out')   { term.textContent += m.data; }
-    if (m.type === 'done')  { statusEl.textContent = 'Done'; activeDeliver = null; }
-  };
-  pyWorker.onerror = (e) => { console.error(e); statusEl.textContent = 'Worker error'; };
+
+  pyInitPromise = new Promise((resolve) => {
+    pyWorker.onmessage = (e) => {
+      const m = e.data;
+      if (m.type === 'inited') { statusEl.textContent = 'Python worker inited…'; }
+      if (m.type === 'ready')  { pyReady = true; statusEl.textContent = 'Python ready'; resolve(); }
+      if (m.type === 'out')    { term.textContent += m.data; }
+      if (m.type === 'done')   { statusEl.textContent = 'Done'; activeDeliver = null; }
+    };
+  });
+
+  pyWorker.onerror = (e) => { console.error('Worker error:', e); statusEl.textContent = 'Worker error'; };
+  return pyInitPromise;
 }
 
 function deliverToPython(lineStr) {
@@ -152,10 +163,9 @@ function deliverToPython(lineStr) {
   Atomics.notify(SIG, 0);
 }
 
-function runPython(codeStr) {
-  ensurePyWorker();
-  activeDeliver = deliverToPython;
-  if (!pyReady) statusEl.textContent = 'Loading Python... (first time ~10MB)';
+async function runPython(codeStr) {
+  await ensurePyWorker();                        // wait until worker says "ready"
+  activeDeliver = deliverToPython;               // now route input
   pyWorker.postMessage({ type:'run', code: codeStr });
 }
 
@@ -171,18 +181,19 @@ async function ensureSQL(){
 /* ---------- RUN button ---------- */
 document.getElementById('run').addEventListener('click', async () => {
   const lang = langSel.value;
-  term.textContent = ""; statusEl.textContent = "Running...";
+  term.textContent = ""; statusEl.textContent = "Running…";
   activeDeliver = null;
 
   if (lang === 'python') {
-    runPython(code.value);
+    statusEl.textContent = pyReady ? 'Running Python…' : 'Loading Python (first time ~10MB)…';
+    await runPython(code.value);
     return;
   }
 
   if (lang === 'sql') {
     await ensureSQL();
     try {
-      const res = db.exec(code.value); // [{columns, values}]
+      const res = db.exec(code.value);
       if (res.length === 0) term.textContent = "(ok)\n";
       else {
         res.forEach(tbl => {
@@ -198,7 +209,7 @@ document.getElementById('run').addEventListener('click', async () => {
   }
 
   if (lang === 'javascript') {
-    try { /* simple: use prompt for input */ eval(code.value); statusEl.textContent = "Done"; }
+    try { eval(code.value); statusEl.textContent = "Done"; }
     catch (e) { term.textContent += String(e) + "\n"; statusEl.textContent = "Error"; }
     return;
   }
@@ -210,5 +221,6 @@ document.getElementById('run').addEventListener('click', async () => {
   }
 });
 </script>
+
 </body>
 </html>
