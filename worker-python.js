@@ -23,7 +23,7 @@ self.onmessage = async (e) => {
   if (m.type === 'run') {
     await ensurePy();
 
-    // MUST return number of chars written
+    // MUST return the number of chars written
     pyodide.setStdout({ write: s => { postMessage({ type:'out', data:s }); return s.length; } });
     pyodide.setStderr({ write: s => { postMessage({ type:'out', data:s }); return s.length; } });
 
