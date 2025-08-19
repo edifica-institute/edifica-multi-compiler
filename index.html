@@ -111,7 +111,14 @@ function setMode(mode){
   else { code.value = TPL[mode] || ""; }
 }
 setMode(langSel.value);
-langSel.addEventListener('change', e => setMode(e.target.value));
+langSel.addEventListener('change', () => {
+  const v = langSel.value;
+  if (location.pathname.startsWith('/py/')) {
+    if (v !== 'python') location.href = '/';        // go to Java/others page
+  } else {
+    if (v === 'python') location.href = '/py/';     // go to Python page
+  }
+});
 
 /* ---------- Shared input routing ---------- */
 let activeDeliver = null;
