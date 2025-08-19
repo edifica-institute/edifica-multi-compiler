@@ -1,0 +1,154 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Multi-Compiler</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root { --bg:#0b0f14; --fg:#e8eef3; --muted:#9fb1c1; }
+  body { margin:0; font-family:system-ui,Segoe UI,Inter,sans-serif; background:var(--bg); color:var(--fg); }
+  header, footer { padding:12px 16px; background:#0e141b; border-bottom:1px solid #1b2633; }
+  .bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  select, button, textarea, input { font:inherit; }
+  select, button { padding:8px 12px; border-radius:10px; border:1px solid #223042; background:#111824; color:var(--fg); }
+  button { cursor:pointer; }
+  main { padding:12px; display:grid; gap:12px; grid-template-columns: 1fr 1fr; }
+  .col { display:flex; flex-direction:column; gap:8px; }
+  textarea { width:100%; height:260px; border-radius:10px; border:1px solid #223042; background:#0e141b; color:var(--fg); padding:10px; }
+  .row { display:flex; gap:8px; align-items:center; }
+  #iframeWrap { border:1px solid #223042; border-radius:10px; overflow:hidden; height:320px; background:#fff; }
+  iframe { width:100%; height:100%; border:0; background:#fff; }
+  @media (max-width: 900px){ main{ grid-template-columns:1fr; } }
+  small { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="bar">
+    <strong>Multi-Compiler</strong>
+    <select id="lang">
+      <option value="java">Java</option>
+      <option value="c">C (GCC)</option>
+      <option value="cpp">C++ (GCC)</option>
+      <option value="python">Python</option>
+      <option value="sql">SQL (SQLite)</option>
+      <option value="csharp">C#</option>
+      <option value="vb">Visual Basic .NET</option>
+      <option value="javascript">JavaScript (Node)</option>
+      <option value="html_css">HTML & CSS (in-browser)</option>
+    </select>
+    <button id="run">▶ Run</button>
+    <small id="status"></small>
+  </div>
+</header>
+
+<main>
+  <div class="col" id="codeCol">
+    <label>Source code</label>
+    <textarea id="code"></textarea>
+    <div class="row" id="stdinRow">
+      <label for="stdin">STDIN</label>
+      <input id="stdin" placeholder="Optional input..." style="flex:1; padding:8px; border-radius:8px; border:1px solid #223042; background:#0e141b; color:var(--fg);" />
+    </div>
+
+    <!-- HTML/CSS/JS editors (shown only when HTML & CSS selected) -->
+    <div id="webEditors" style="display:none; gap:8px;">
+      <label>HTML</label>
+      <textarea id="html"></textarea>
+      <label>CSS</label>
+      <textarea id="css"></textarea>
+      <label>JS (optional)</label>
+      <textarea id="js"></textarea>
+    </div>
+  </div>
+
+  <div class="col">
+    <label>Output</label>
+    <textarea id="output" readonly></textarea>
+
+    <div id="iframeWrap" style="display:none;">
+      <iframe id="preview"></iframe>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <small>Backed by Judge0 CE (SQL & VB.NET supported); HTML/CSS rendered in-browser. Docs: languages & submissions. </small>
+</footer>
+
+<script>
+// --- defaults per language ---
+const TPL = {
+  java: `class Main{public static void main(String[]args){ System.out.println("Hello, Java!"); }}`,
+  c:    `#include <stdio.h>\nint main(){ int x=10; int *p=&x; printf("%d\\n", *p); }`,
+  cpp:  `#include <bits/stdc++.h>\nusing namespace std; int main(){ int x=42; int* p=&x; cout<<*p; }`,
+  python: `print("Hello, Python!")`,
+  sql:  `CREATE TABLE t(id INTEGER);\nINSERT INTO t VALUES (1),(2);\nSELECT COUNT(*) FROM t;`,
+  csharp: `using System; class Program{ static void Main(){ Console.WriteLine("Hello, C#"); } }`,
+  vb: `Module M\n  Sub Main()\n    Console.WriteLine("Hello, VB.NET")\n  End Sub\nEnd Module`,
+  javascript: `console.log("Hello from Node");`,
+  html: `<!DOCTYPE html><h1>Hello, HTML</h1><p>Edit CSS & JS too!</p>`,
+  css: `body{font:16px system-ui; padding:20px} h1{color:#2a6}` ,
+  js: `console.log("Hello from browser JS")`
+};
+
+const code = document.getElementById('code');
+const out  = document.getElementById('output');
+const langSel = document.getElementById('lang');
+const statusEl = document.getElementById('status');
+const stdinEl = document.getElementById('stdin');
+
+// HTML/CSS editors
+const webBox = document.getElementById('webEditors');
+const htmlEl = document.getElementById('html');
+const cssEl  = document.getElementById('css');
+const jsEl   = document.getElementById('js');
+const iframe = document.getElementById('preview');
+const iframeWrap = document.getElementById('iframeWrap');
+
+function setMode(mode){
+  const htmlMode = (mode === 'html_css');
+  webBox.style.display = htmlMode ? 'flex' : 'none';
+  iframeWrap.style.display = htmlMode ? 'block' : 'none';
+  code.style.display = htmlMode ? 'none' : 'block';
+  stdinEl.parentElement.style.display = htmlMode ? 'none' : 'flex';
+  out.style.display = htmlMode ? 'none' : 'block';
+
+  if (htmlMode) {
+    htmlEl.value = TPL.html; cssEl.value = TPL.css; jsEl.value = TPL.js;
+  } else {
+    code.value = TPL[mode] || "";
+  }
+}
+setMode(langSel.value);
+
+langSel.addEventListener('change', e => setMode(e.target.value));
+
+document.getElementById('run').addEventListener('click', async () => {
+  const lang = langSel.value;
+  statusEl.textContent = "Running...";
+  try {
+    if (lang === 'html_css') {
+      const doc = `<!doctype html><html><head><meta charset="utf-8"><style>${cssEl.value}</style></head><body>${htmlEl.value}<script>${jsEl.value}<\/script></body></html>`;
+      iframe.srcdoc = doc;
+      statusEl.textContent = "Rendered (local)";
+      return;
+    }
+    out.value = "";
+    const r = await fetch("/api/run", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ language: lang, source_code: code.value, stdin: stdinEl.value })
+    });
+    const data = await r.json();
+    out.value = (data.stdout || "") + ((data.stderr && data.stderr.trim()) ? ("\n[stderr]\n"+data.stderr) : "");
+    statusEl.textContent = "Done";
+  } catch (e) {
+    out.value = "Error: " + (e.message || e);
+    statusEl.textContent = "Error";
+  }
+});
+</script>
+</body>
+</html>
