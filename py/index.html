@@ -1,160 +1,49 @@
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>Edifica Multi-Compiler</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <script src="https://cjrtnc.leaningtech.com/4.2/loader.js"></script>
+// /py/index.js — Python-only page
+// Requirements:
+// 1) /py/ must be cross-origin isolated (COEP on) so SharedArrayBuffer exists.
+// 2) worker file at /py/worker-python.js (loads Pyodide with importScripts).
+// 3) HTML elements present: #lang, #code, #run, #term, #line, #status
 
-  <style>
-    :root { --bg:#0b0f14; --fg:#e8eef3; --muted:#a9b6c3; }
-    body { margin:0; font-family:system-ui,Segoe UI,Inter,sans-serif; background:var(--bg); color:var(--fg); }
-    header, footer { padding:12px 16px; background:#0e141b; border-bottom:1px solid #1b2633; }
-    .bar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-    select, button { padding:8px 12px; border-radius:10px; border:1px solid #223042; background:#111824; color:var(--fg); }
-    main { padding:12px; display:grid; gap:12px; grid-template-columns: 1fr 1fr; }
-    textarea, input { width:100%; padding:10px; border-radius:10px; border:1px solid #223042; background:#0e141b; color:var(--fg); font:14px ui-monospace, SFMono-Regular, Menlo, monospace; }
-    #code { height:280px; }
-    #term { min-height:260px; white-space:pre-wrap; background:#0e141b; border:1px solid #223042; border-radius:10px; padding:10px; }
-    #iframeWrap { border:1px solid #223042; border-radius:10px; overflow:hidden; height:320px; background:#fff; display:none; }
-    iframe { width:100%; height:100%; border:0; }
-    .row { display:flex; gap:8px; align-items:center; }
-    @media (max-width: 900px){ main{ grid-template-columns:1fr; } }
-    small { color: var(--muted); }
-  </style>
-
-  <!-- SQL (SQLite in the browser) -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js"
-          crossorigin="anonymous" defer></script>
-</head>
-<body>
-<header>
-  <div class="bar">
-    <strong>Edifica Multi-Compiler-3</strong>
-    <select id="lang">
-      <option value="python">Python</option>
-      <option value="java">Java</option>
-      <option value="sql">SQL (SQLite)</option>
-      <option value="javascript">JavaScript</option>
-      <option value="html_css">HTML & CSS (+ JS)</option>
-    </select>
-    <button id="run">▶ Run</button>
-    <small id="status"></small>
-  </div>
-</header>
-
-<main>
-  <div>
-    <label>Source</label>
-    <textarea id="code"></textarea>
-
-    <!-- HTML/CSS/JS editors (only visible when HTML & CSS selected) -->
-    <div id="webEditors" style="display:none; gap:8px;">
-      <label>HTML</label>
-      <textarea id="html"></textarea>
-      <label>CSS</label>
-      <textarea id="css"></textarea>
-      <label>JS (optional)</label>
-      <textarea id="js"></textarea>
-    </div>
-
-    <div class="row" id="inputRow">
-      <label for="line" style="min-width:90px">Input ⤶</label>
-      <input id="line" placeholder="type input and press Enter" />
-    </div>
-  </div>
-
-  <div>
-    <label>Console</label>
-    <pre id="term"></pre>
-    <div id="iframeWrap"><iframe id="preview"></iframe></div>
-  </div>
-</main>
-
-<footer>
-  <small>Python powered by Pyodide (WebAssembly). SQL by sql.js. Everything runs in your browser — no server costs.</small>
-</footer>
-
-<script>
 'use strict';
 
-/* ---------- DOM refs ---------- */
-const code = document.getElementById('code');
-const term = document.getElementById('term');
-const line = document.getElementById('line');
-const statusEl = document.getElementById('status');
-const langSel = document.getElementById('lang');
-const webBox  = document.getElementById('webEditors');
-const htmlEl  = document.getElementById('html');
-const cssEl   = document.getElementById('css');
-const jsEl    = document.getElementById('js');
-const iframe  = document.getElementById('preview');
-const iframeWrap = document.getElementById('iframeWrap');
+// ---- DOM ----
+const code   = document.getElementById('code');
+const term   = document.getElementById('term');
+const line   = document.getElementById('line');
+const status = document.getElementById('status');
+const lang   = document.getElementById('lang');
 
-const TPL = {
-  python: `print("enter ", end="")\nx = int(input())\nprint("You typed:", x)`,
-  sql: `CREATE TABLE t(id INTEGER);\nINSERT INTO t VALUES (1),(2),(3);\nSELECT COUNT(*) AS cnt FROM t;`,
-  javascript: `const x = parseInt(prompt("enter")); console.log("You typed:", x);`,
-  html: `<!DOCTYPE html><h1>Hello, HTML</h1><p>Edit CSS & JS too!</p>`,
-  css: `body{font:16px system-ui; padding:20px} h1{color:#2a6}`,
-  js: `console.log("Hello from browser JS")`
-};
+// default template
+code.value = `print("enter ", end="")\nx = int(input())\nprint("You typed:", x)`;
 
-function setMode(mode){
-  const isWeb = (mode === 'html_css');
-  webBox.style.display = isWeb ? 'block' : 'none';
-  iframeWrap.style.display = isWeb ? 'block' : 'none';
-  code.style.display = isWeb ? 'none' : 'block';
-  document.getElementById('inputRow').style.display = isWeb ? 'none' : 'flex';
-  term.textContent = "";
-  if (isWeb) { htmlEl.value = TPL.html; cssEl.value = TPL.css; jsEl.value = TPL.js; }
-  else { code.value = TPL[mode] || ""; }
+// guard: this page *must* be isolated
+const supportsSAB = (typeof SharedArrayBuffer !== 'undefined') && window.crossOriginIsolated;
+if (!supportsSAB) {
+  term.textContent = "This Python page needs cross-origin isolation (COEP).";
+  throw new Error("SharedArrayBuffer not available on /py/");
 }
-setMode(langSel.value);
-langSel.addEventListener('change', e => setMode(e.target.value));
 
-/* ---------- Shared input routing ---------- */
-let activeDeliver = null;
-line.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
-    const s = line.value + "\n";
-    line.value = "";
-    term.textContent += s;           // echo
-    if (activeDeliver) activeDeliver(s);
-  }
-});
-
-/* ---------- PYTHON (Worker + SharedArrayBuffer) ---------- */
+// ---- Python worker (Pyodide) ----
 let pyWorker = null;
-let pyReady = false;
-let pyInitPromise = null;
+let pyReady  = false;
 
-// Shared buffers
 const sigBuf  = new SharedArrayBuffer(4);
 const SIG     = new Int32Array(sigBuf);
-const dataBuf = new SharedArrayBuffer(65536);  // 64KB per line
+const dataBuf = new SharedArrayBuffer(65536);
 const LEN     = new Int32Array(dataBuf, 0, 1);
 const BYTES   = new Uint8Array(dataBuf, 4);
 
 function ensurePyWorker() {
-  if (pyInitPromise) return pyInitPromise;
+  if (pyWorker) return;
   pyWorker = new Worker('worker-python.js');
-
-  // Send shared buffers
-  pyWorker.postMessage({ type:'init', sig: sigBuf, data: dataBuf });
-
-  pyInitPromise = new Promise((resolve) => {
-    pyWorker.onmessage = (e) => {
-      const m = e.data;
-      if (m.type === 'inited') { statusEl.textContent = 'Python worker inited…'; }
-      if (m.type === 'ready')  { pyReady = true; statusEl.textContent = 'Python ready'; resolve(); }
-      if (m.type === 'out')    { term.textContent += m.data; }
-      if (m.type === 'done')   { statusEl.textContent = 'Done'; activeDeliver = null; }
-    };
-  });
-
-  pyWorker.onerror = (e) => { console.error('Worker error:', e); statusEl.textContent = 'Worker error'; };
-  return pyInitPromise;
+  pyWorker.postMessage({ type: 'init', sig: sigBuf, data: dataBuf });
+  pyWorker.onmessage = (e) => {
+    const m = e.data;
+    if (m.type === 'ready') { pyReady = true; status.textContent = 'Python ready'; }
+    if (m.type === 'out')   { term.textContent += m.data; }
+    if (m.type === 'done')  { status.textContent = 'Done'; activeDeliver = null; }
+  };
+  pyWorker.onerror = (e) => { console.error('Worker error', e); status.textContent = 'Worker error'; };
 }
 
 function deliverToPython(lineStr) {
@@ -166,64 +55,27 @@ function deliverToPython(lineStr) {
   Atomics.notify(SIG, 0);
 }
 
-async function runPython(codeStr) {
-  await ensurePyWorker();                        // wait until worker says "ready"
-  activeDeliver = deliverToPython;               // now route input
-  pyWorker.postMessage({ type:'run', code: codeStr });
-}
-
-/* ---------- SQL (sql.js) ---------- */
-let SQL, db;
-async function ensureSQL(){
-  if (!SQL) {
-    SQL = await initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/${f}` });
-  }
-  db = new SQL.Database(); // new in-memory DB per run
-}
-
-/* ---------- RUN button ---------- */
-document.getElementById('run').addEventListener('click', async () => {
-  const lang = langSel.value;
-  term.textContent = ""; statusEl.textContent = "Running…";
-  activeDeliver = null;
-
-  if (lang === 'python') {
-    statusEl.textContent = pyReady ? 'Running Python…' : 'Loading Python (first time ~10MB)…';
-    await runPython(code.value);
-    return;
-  }
-
-  if (lang === 'sql') {
-    await ensureSQL();
-    try {
-      const res = db.exec(code.value);
-      if (res.length === 0) term.textContent = "(ok)\n";
-      else {
-        res.forEach(tbl => {
-          const header = tbl.columns.join(" | ");
-          term.textContent += header + "\n" + "-".repeat(header.length) + "\n";
-          tbl.values.forEach(row => term.textContent += row.join(" | ") + "\n");
-          term.textContent += "\n";
-        });
-      }
-      statusEl.textContent = "Done";
-    } catch (e) { term.textContent += String(e) + "\n"; statusEl.textContent = "Error"; }
-    return;
-  }
-
-  if (lang === 'javascript') {
-    try { eval(code.value); statusEl.textContent = "Done"; }
-    catch (e) { term.textContent += String(e) + "\n"; statusEl.textContent = "Error"; }
-    return;
-  }
-
-  if (lang === 'html_css') {
-    const doc = `<!doctype html><html><head><meta charset="utf-8"><style>${cssEl.value}</style></head><body>${htmlEl.value}<script>${jsEl.value}<\/script></body></html>`;
-    iframe.srcdoc = doc; statusEl.textContent = "Rendered (local)";
-    return;
+// ---- shared input routing ----
+let activeDeliver = null;
+line.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    const s = line.value + '\n';
+    line.value = '';
+    term.textContent += s;            // echo like a console
+    if (activeDeliver) activeDeliver(s);
   }
 });
-</script>
-<script type="module" src="/java-runner.js"></script>
-</body>
-</html>
+
+// ---- Run button ----
+document.getElementById('run').addEventListener('click', async () => {
+  if (lang && lang.value !== 'python') {
+    // if user switches dropdown, bounce them back to the root page
+    location.href = '/';
+    return;
+  }
+  term.textContent = '';
+  status.textContent = pyReady ? 'Running…' : 'Loading Python… (first time ~10MB)';
+  ensurePyWorker();
+  activeDeliver = deliverToPython;
+  pyWorker.postMessage({ type: 'run', code: code.value });
+});
